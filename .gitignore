@@ -1,0 +1,31 @@
+# ================= PYTHON =================
+__pycache__/
+*.pyc
+*.pyo
+
+# ================= VENV ===================
+venv/
+.env/
+
+# ================= DATA / DB ==============
+config/*.json
+config/*.db
+config/*.sqlite
+config/*.bak
+
+# ================= LOGS ===================
+*.log
+
+# ================= IDE ====================
+.vscode/
+.idea/
+
+# ================= OS =====================
+.DS_Store
+Thumbs.db
+
+
+# === OTHER ===
+*.lnk
+run_app.bat
+garbage/

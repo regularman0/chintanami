@@ -1,6 +1,6 @@
 # Path: main.py
-# Version: 20.0
-# Description: Точка входа. Добавлена Валидация, Статус-бар и передача кнопки сохранения во вкладку ввода.
+# Version: 20.2
+# Description: Точка входа. Полная версия с Валидацией, UI, БД и Автозапуском.
 
 import tkinter as tk
 from tkinter import ttk
@@ -8,22 +8,21 @@ import json
 import os
 from datetime import datetime
 
-# --- Импорты из CORE ---
+# CORE
 from core import schema
 from core.storage import Storage
 from core.managers import TagManager, CheckboxManager, RangeManager, PathManager
 
-# --- Импорты БД ---
+# DB & API
 from database.repository import DataRepository
 from database.settings_io import SettingsManager
+from api.launcher import SyncManager
 
-# --- Импорты из UI ---
+# UI
 from ui.input.input_tab import InputTab
 from ui.debug_tab import DebugTab
 from ui.editor.editor_tab import EditorTab
 from ui.db_tab import DBTab
-
-from ui.db_view.view_tab import DbViewTab
 
 # =========================== ТЕМА ===========================
 THEME = {
@@ -39,10 +38,12 @@ THEME = {
 # =========================== ДАННЫЕ ===========================
 if not os.path.exists(schema.CONFIG_DIR): os.makedirs(schema.CONFIG_DIR)
 
+# Загрузка FAS
 fas_config = Storage.load_json(schema.FAS_PATH, {"category": {}, "tag_lists": {}, "checkboxes_list": {}})
 for k in ["tag_lists", "checkboxes_list"]:
     if k not in fas_config: fas_config[k] = {}
 
+# Загрузка Event Data
 raw_event_data = Storage.load_json(schema.EVENT_DATA_PATH)
 event_data = schema.migrate_and_clean(raw_event_data)
 Storage.save_json_atomic(schema.EVENT_DATA_PATH, event_data)
@@ -51,6 +52,7 @@ ui_debug = None
 ui_input = None
 
 def save_callback():
+    """Сохранение промежуточного состояния (черновик)"""
     Storage.save_json_atomic(schema.EVENT_DATA_PATH, event_data)
     if ui_debug: ui_debug.update_data(event_data)
 
@@ -61,90 +63,76 @@ managers = {
     "path": PathManager(event_data, save_callback)
 }
 
-# =========================== ЛОГИКА ВАЛИДАЦИИ И ОТПРАВКИ ===========================
+# =========================== ЛОГИКА СОХРАНЕНИЯ ===========================
 
 def show_status(msg, is_error=False):
-    """Показывает сообщение в шапке на 3 секунды"""
     color = THEME["status_err"] if is_error else THEME["status_ok"]
     lbl_status.config(text=msg, fg=color)
-    # Автоочистка через 3 сек
-    root.after(3000, lambda: lbl_status.config(text="Ready", fg="gray"))
+    root.after(3000, lambda: lbl_status.config(text="System Ready", fg="gray"))
 
 def validate_payload():
-    """Проверяет, есть ли смысл сохранять запись"""
-    # 1. Проверка Пути
+    """Проверка перед записью в БД"""
+    # 1. Путь
     path = managers['path'].get_path()
-    if not path:
-        return False, "Категория не выбрана!"
+    if not path: return False, "Категория не выбрана!"
     
-    # 2. Проверка Чекбоксов (Флаг действия)
+    # 2. Чекбоксы
     has_checks = len(event_data.get("checkboxes", [])) > 0
     
-    # 3. Проверка Времени (Длительность > 0)
-    # Используем метод менеджера, он уже умеет считать разницу
+    # 3. Время
     minutes = managers['range'].get_duration_minutes()
-    # Если minutes None (ошибка парсинга) или <= 0, то false
     has_duration = (minutes is not None) and (minutes > 0)
     
-    # ИТОГ: Либо действие, либо потраченное время
-    if has_checks or has_duration:
-        return True, "OK"
-    else:
-        return False, "Пустая запись! (Нужен чекбокс или время > 0)"
+    if has_checks or has_duration: return True, "OK"
+    else: return False, "Пустая запись (нет времени или действий)!"
 
 def process_save_action():
-    # 1. Валидация
+    """Вызывается кнопкой 'Сохранить'"""
     is_valid, msg = validate_payload()
-    
     if not is_valid:
         show_status(f"ОШИБКА: {msg}", is_error=True)
         return
 
-    # 2. Запись в БД
     success = DataRepository.save_event(event_data)
     
     if success:
-        show_status(f"УСПЕШНО ЗАПИСАНО (ID последней: ...)", is_error=False)
-        
-        # 3. Авто-очистка
+        show_status("УСПЕШНО ЗАПИСАНО В БД", is_error=False)
+        # Проверка настройки авто-очистки
         do_clear = SettingsManager.get("db", "auto_clear_after_save", False)
         if do_clear:
             clear_event_data_form()
-            print(">>> [Auto-Clear] Форма очищена")
     else:
-        show_status("ОШИБКА ЗАПИСИ В БД (см. консоль)", is_error=True)
+        show_status("ОШИБКА ЗАПИСИ (см. консоль)", is_error=True)
 
 def clear_event_data_form():
-    """Очищает данные (кроме пути)"""
+    """Очистка формы после записи"""
     event_data["tags"].clear()
     event_data["checkboxes"].clear()
     
-    # Сбрасываем время на "Сейчас" (или потом добавим логику переноса конца)
-    # TODO: Сюда добавим логику "Взять конец предыдущей" позже
+    # Сброс времени на "Сейчас"
     now_str = datetime.now().strftime(schema.DT_FMT)
     event_data["range"]["or_range_val"] = now_str
     event_data["range"]["end_range_val"] = now_str
     
-    save_callback()
-    
-    if ui_input:
-        ui_input.render_dynamic_content()
+    save_callback() # Сохраняем пустой черновик
+    if ui_input: ui_input.render_dynamic_content() # Обновляем UI
 
 # =========================== GUI ===========================
 root = tk.Tk()
-root.title("System Panel v20.0 (Validation & UX)")
+root.title("System Panel v20.2 (Full)")
 root.geometry("1300x850")
 root.configure(bg=THEME["window_bg"])
 
-# --- HEADER (Статус-бар вместо кнопок) ---
-header_frame = tk.Frame(root, bg=THEME["header_bg"], height=40)
+# Header
+header_frame = tk.Frame(root, bg=THEME["header_bg"], height=50)
 header_frame.pack(fill="x", side="top")
 
-# Лейбл статуса (по центру или слева)
+tk.Label(header_frame, text="SYSTEM KERNEL", bg=THEME["header_bg"], fg="white", font=("Arial", 14, "bold")).pack(side="left", padx=15)
+# Статус бар
 lbl_status = tk.Label(header_frame, text="System Ready", bg=THEME["header_bg"], fg="gray", font=("Consolas", 12, "bold"))
-lbl_status.pack(side="left", padx=20, pady=10)
+lbl_status.pack(side="right", padx=20, pady=12)
 
-# --- TABS ---
+# Notebook
 style = ttk.Style()
 style.theme_use('clam')
 style.configure("TNotebook.Tab", padding=[15, 5], font=('Arial', 10))
@@ -154,23 +142,19 @@ notebook.pack(fill="both", expand=True, padx=5, pady=5)
 def on_config_change(new_conf):
     if ui_debug: ui_debug.update_config(new_conf)
 
-# 1. Ввод (Передаем process_save_action как коллбэк)
-ui_input = InputTab(
-    notebook, 
-    THEME, 
-    managers, 
-    fas_config, 
-    event_data, 
-    debug_callback=on_config_change,
-    save_callback=process_save_action # <--- Новая функция сохранения
-)
+# --- Инициализация вкладок ---
+
+# 1. Ввод
+ui_input = InputTab(notebook, THEME, managers, fas_config, event_data, 
+                    debug_callback=on_config_change, 
+                    save_callback=process_save_action)
 notebook.add(ui_input.frame, text="  ВВОД ДАННЫХ  ")
 
 # 2. Редактор
 ui_editor = EditorTab(notebook, THEME, ui_input, fas_config)
 notebook.add(ui_editor.frame, text="  РЕДАКТОР  ")
 
-# 3. Настройки БД
+# 3. БД
 ui_db = DBTab(notebook, THEME)
 notebook.add(ui_db.frame, text="  НАСТРОЙКИ БД  ")
 
@@ -178,11 +162,14 @@ notebook.add(ui_db.frame, text="  НАСТРОЙКИ БД  ")
 ui_debug = DebugTab(notebook, THEME)
 notebook.add(ui_debug.frame, text="  ОТЛАДКА  ")
 
-# 5. Просмотр БД
-ui_db_view = DbViewTab(notebook, THEME)
-notebook.add(ui_db_view.frame, text="  БАЗА ДАННЫХ  ")
-
-
-# Init
+# Initial Data Update
 ui_debug.update_data(event_data)
+
+# --- АВТОЗАПУСК СЕРВЕРА ---
+# Читаем настройку. Если True — запускаем.
+if SettingsManager.get("network", "autostart_server", False):
+    url = SyncManager.start_server()
+    print(f">>> [AutoStart] Server started at {url}")
+    # UI во вкладке БД обновится сам при открытии (там есть проверка is_running)
+
 root.mainloop()

@@ -1,37 +1,50 @@
 # Path: database/connection.py
-# Version: 18.0
-# Description: Управление соединением с SQLite.
+# Version: 2.5 (With Auto-Backup)
+# Description: Подключение к БД с автоматическим созданием бэкапа.
 
 import sqlite3
+import os
+import shutil
+from datetime import datetime
 from .db_config import DB_PATH
 
 class DBConnection:
-    """
-    Контекстный менеджер для безопасного соединения.
-    Использование:
-    with DBConnection() as conn:
-        cursor = conn.cursor()
-        ...
-    """
+    def __init__(self):
+        self.conn = None
+
     def __enter__(self):
-        # check_same_thread=False нужен, если GUI и БД работают в разных потоках (на будущее)
-        self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-        # Позволяет обращаться к колонкам по имени (row["id"]), а не по индексу
+        # Авто-бэкап раз в день при первом запуске
+        self._check_backup()
+        
+        self.conn = sqlite3.connect(DB_PATH)
         self.conn.row_factory = sqlite3.Row
         return self.conn
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type:
-            # Если была ошибка, откатываем изменения
-            self.conn.rollback()
-            print(f"[DB Error] Rollback executed due to: {exc_val}")
-        else:
-            # Если все ок, сохраняем
-            self.conn.commit()
-        self.conn.close()
+        if self.conn:
+            if exc_type is None:
+                self.conn.commit()
+            else:
+                self.conn.rollback()
+            self.conn.close()
 
-def init_db():
-    """Создает файл БД, если его нет"""
-    with DBConnection() as conn:
-        # Пока ничего не делаем, таблицы создаст SchemaManager
-        pass
+    def _check_backup(self):
+        """Создает копию базы в папке /backups, если её там еще нет за сегодня"""
+        if not os.path.exists(DB_PATH): return
+        
+        backup_dir = "backups"
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir)
+            
+        today = datetime.now().strftime("%Y_%m_%d")
+        backup_file = os.path.join(backup_dir, f"db_backup_{today}.bak")
+        
+        if not os.path.exists(backup_file):
+            try:
+                shutil.copy2(DB_PATH, backup_file)
+                # Удаляем старые бэкапы (оставляем только последние 7)
+                all_backups = sorted([os.path.join(backup_dir, f) for f in os.listdir(backup_dir)])
+                if len(all_backups) > 7:
+                    os.remove(all_backups[0])
+            except Exception as e:
+                print(f"Backup failed: {e}")

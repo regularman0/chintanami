@@ -1,6 +1,6 @@
 # Path: ui/db_view/table_panel.py
-# Version: 22.0
-# Description: Таблица с поддержкой сортировки и внешних фильтров.
+# Version: 25.0
+# Description: Таблица. Сортировка по умолчанию изменена на timestamp (из-за UUID).
 
 import tkinter as tk
 from tkinter import ttk
@@ -13,15 +13,15 @@ PAGE_SIZE = 100
 class TablePanel:
     def __init__(self, parent, theme, on_select_callback):
         self.frame = tk.Frame(parent, bg=theme["window_bg"])
-        self.frame.pack(fill="both", expand=True) # Важно: Pack
+        self.frame.pack(fill="both", expand=True)
         self.theme = theme
         self.on_select = on_select_callback
         
         self.current_offset = 0
         self.is_raw_mode = False
         
-        # Параметры сортировки и фильтрации
-        self.sort_col = "id"
+        # Сортировка по умолчанию - ДАТА (т.к. ID теперь случайный)
+        self.sort_col = "timestamp"
         self.sort_desc = True
         self.active_filters = {}
         
@@ -53,29 +53,24 @@ class TablePanel:
         tk.Button(self.pag_frame, text=">>", command=self.next_page).pack(side="left", padx=5)
 
     def apply_filters(self, filters):
-        """Вызывается из FilterPanel"""
         self.active_filters = filters
-        self.current_offset = 0 # Сброс на 1 страницу
+        self.current_offset = 0
         self.refresh()
 
     def sort_by(self, col):
-        """Обработчик клика по заголовку"""
         if self.sort_col == col:
-            self.sort_desc = not self.sort_desc # Инверсия
+            self.sort_desc = not self.sort_desc
         else:
             self.sort_col = col
-            self.sort_desc = True # По умолчанию новые DESC
-            
+            self.sort_desc = True
         self.refresh()
 
     def refresh(self):
         self.tree.delete(*self.tree.get_children())
         
-        # Настройка колонок
         if self.is_raw_mode: self._setup_columns_raw()
         else: self._setup_columns_summary()
 
-        # Запрос с фильтрами
         rows = QueryBuilder.fetch_data(
             offset=self.current_offset, 
             limit=PAGE_SIZE,
@@ -86,37 +81,32 @@ class TablePanel:
         
         for row in rows:
             values = self._process_row(row)
+            # row["id"] теперь UUID строка
             self.tree.insert("", "end", iid=row["id"], values=values)
             
         self.lbl_page.config(text=f"Стр. {(self.current_offset // PAGE_SIZE) + 1}")
 
     def _setup_columns_summary(self):
-        # Определение колонок и их заголовков
         cols_map = {
             "ID": "id",
             "Date": "timestamp",
-            "Duration": "range_start", # Технически сортируем по началу
+            "Duration": "range_start",
             "Category": "category_path",
-            "Summary": None # Не сортируется в SQL (сложно)
+            "Summary": None
         }
-        
         self.tree.config(columns=list(cols_map.keys()), show="headings")
         
         for col_name, db_field in cols_map.items():
-            # Добавляем стрелочку, если это текущая колонка сортировки
             arrow = ""
-            if db_field == self.sort_col:
-                arrow = " ▼" if self.sort_desc else " ▲"
+            if db_field == self.sort_col: arrow = " ▼" if self.sort_desc else " ▲"
             
-            # Назначаем команду клика
-            # lambda c=db_field: ... нужен для замыкания значения
             if db_field:
                 self.tree.heading(col_name, text=col_name + arrow, command=lambda c=db_field: self.sort_by(c))
             else:
-                self.tree.heading(col_name, text=col_name) # Без сортировки
+                self.tree.heading(col_name, text=col_name)
 
-            # Ширина
-            width = 50 if col_name == "ID" else (120 if col_name == "Date" else (300 if col_name=="Summary" else 150))
+            # ID теперь длинный, даем ему место или скрываем (здесь 100px)
+            width = 100 if col_name == "ID" else (120 if col_name == "Date" else (300 if col_name=="Summary" else 150))
             self.tree.column(col_name, width=width)
 
     def _setup_columns_raw(self):
@@ -132,9 +122,7 @@ class TablePanel:
         if self.is_raw_mode:
             return [row[c] for c in QueryBuilder.get_columns()]
         
-        # Summary Formatting
         ts = row.get("timestamp", "")
-        # Remove seconds visually
         if len(ts) > 16: ts = ts[:16]
         
         s_str = row.get("range_start", "")
@@ -142,14 +130,17 @@ class TablePanel:
         dur_str = "-"
         if s_str and e_str:
             try:
-                # Пытаемся распарсить новый формат
                 s = datetime.strptime(s_str, schema.DT_FMT)
                 e = datetime.strptime(e_str, schema.DT_FMT)
                 diff = (e - s).total_seconds() / 60
                 dur_str = f"{int(diff)} min"
             except: pass
 
-        return (row["id"], ts, dur_str, row.get("category_path", ""), QueryBuilder.generate_summary(row))
+        # Обрезаем UUID для красоты в таблице (показываем первые 8 символов)
+        # Полный UUID хранится внутри iid
+        short_id = str(row["id"])[:8] + "..."
+
+        return (short_id, ts, dur_str, row.get("category_path", ""), QueryBuilder.generate_summary(row))
 
     def set_raw_mode(self, val):
         self.is_raw_mode = val

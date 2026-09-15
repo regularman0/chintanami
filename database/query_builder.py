@@ -55,11 +55,12 @@ class QueryBuilder:
         where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
         direction = "DESC" if sort_desc else "ASC"
         
-        if sort_col not in ["id", "timestamp"]: sort_col = "timestamp"
-
-        query = f"SELECT * FROM {TABLE_NAME} {where_sql} ORDER BY {sort_col} {direction} LIMIT ? OFFSET ?"
+        # Если сортируем по дате — используем updated_at или rowid, чтобы свежие записи были наверху
+        order_by = "updated_at DESC" if sort_col == "timestamp" and sort_desc else f"{sort_col} {direction}"
+        query = f"SELECT * FROM {TABLE_NAME} {where_sql} ORDER BY {order_by} LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         
+
         try:
             with DBConnection() as conn:
                 cursor = conn.execute(query, params)

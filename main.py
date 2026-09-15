@@ -1,6 +1,15 @@
 # Path: main.py
 # Version: 20.3
 # Description: Точка входа. Восстановлена вкладка просмотра БД (DbViewTab).
+import sys
+import os
+
+print("--- DIAGNOSTICS ---")
+print(f"Путь к интерпретатору: {sys.executable}")
+print(f"Путь к этому файлу: {os.path.abspath(__file__)}")
+print(f"Рабочая директория: {os.getcwd()}")
+print("-------------------\n")
+
 
 import tkinter as tk
 from tkinter import ttk
@@ -84,6 +93,10 @@ def process_save_action():
     success = DataRepository.save_event(event_data)
     if success:
         show_status("УСПЕШНО ЗАПИСАНО В БД", is_error=False)
+        # АВТООБНОВЛЕНИЕ ТАБЛИЦЫ:
+        if 'ui_db_view' in globals() and ui_db_view:
+            ui_db_view.refresh_all()
+            
         do_clear = SettingsManager.get("db", "auto_clear_after_save", False)
         if do_clear: clear_event_data_form()
     else:

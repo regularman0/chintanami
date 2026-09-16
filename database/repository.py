@@ -61,8 +61,8 @@ class DataRepository:
 
     @staticmethod
     def get_last_event_end():
-        # Берем только НЕ удаленные
-        query = f"SELECT range_end FROM {TABLE_NAME} WHERE is_deleted = 0 ORDER BY timestamp DESC LIMIT 1"
+        # Берем только НЕ удаленные и сортируем по физическому порядку (rowid)
+        query = f"SELECT range_end FROM {TABLE_NAME} WHERE (is_deleted = 0 OR is_deleted IS NULL) AND range_end IS NOT NULL AND range_end != '' ORDER BY rowid DESC LIMIT 1"
         try:
             SchemaManager.ensure_table_exists()
             with DBConnection() as conn:
